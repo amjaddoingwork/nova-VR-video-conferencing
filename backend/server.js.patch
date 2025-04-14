@@ -1,0 +1,102 @@
+// BACKEND PATCH INSTRUCTIONS
+// Please apply the following changes to your server.js file to allow guest access
+
+// FIND this code block (your Socket.IO auth middleware)
+// It might look something like this:
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication error: Token not provided'));
+  }
+  
+  // Verify the token...
+  // ...
+});
+
+// REPLACE with this updated middleware:
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  
+  if (token) {
+    // Verify token for authenticated users
+    try {
+      // Your existing token verification logic
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.user = decoded; // Store user data on socket
+      next();
+    } catch (err) {
+      console.error('Invalid token:', err);
+      return next(new Error('Authentication error: Invalid token'));
+    }
+  } else {
+    // Allow guests without a token
+    console.log('Guest connection (no token) allowed');
+    socket.isGuest = true;
+    next();
+  }
+});
+
+// FIND your 'joinRoom' event handler
+// It might look something like this:
+socket.on('joinRoom', (roomId) => {
+  socket.join(roomId);
+  // Other room joining logic...
+});
+
+// REPLACE with this updated handler that handles the guest data:
+socket.on('joinRoom', (roomId, participantData = {}) => {
+  console.log(`User joining room ${roomId}:`, participantData);
+  
+  // Store participant data on the socket
+  socket.participantData = {
+    id: participantData.id || socket.id,
+    name: participantData.name || (socket.user ? socket.user.name : 'Guest'),
+    isGuest: participantData.isGuest || socket.isGuest || false
+  };
+  
+  // Join the room
+  socket.join(roomId);
+  
+  // Confirm successful join to the client
+  socket.emit('roomJoined');
+  
+  // Get existing participants in the room
+  const socketsInRoom = io.sockets.adapter.rooms.get(roomId);
+  const participants = [];
+  
+  if (socketsInRoom) {
+    for (const socketId of socketsInRoom) {
+      const clientSocket = io.sockets.sockets.get(socketId);
+      // Don't include the current socket
+      if (socketId !== socket.id && clientSocket.participantData) {
+        participants.push(clientSocket.participantData);
+      }
+    }
+  }
+  
+  // Send existing participants to the new joiner
+  socket.emit('existingParticipants', participants);
+  
+  // Notify others about the new participant
+  socket.to(roomId).emit('newParticipant', socket.participantData);
+});
+
+// ADD the following signal event handler if you don't have it already:
+socket.on('signal', ({ toId, signal }) => {
+  // Forward WebRTC signaling data to the target socket
+  socket.to(toId).emit('signal', {
+    fromId: socket.id,
+    signal
+  });
+});
+
+// ADD the following disconnect handler if you don't have it:
+socket.on('disconnect', () => {
+  // Find all rooms this socket was in
+  const rooms = [...socket.rooms].filter(room => room !== socket.id);
+  
+  // Notify each room that the participant left
+  rooms.forEach(roomId => {
+    socket.to(roomId).emit('participantLeft', socket.id);
+  });
+}); 

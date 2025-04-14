@@ -1,0 +1,32 @@
+services:
+  # Backend API service
+  - type: web
+    name: virtual-library-rooms-backend
+    env: node
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - fromGroup: mongodb-config
+  
+  # Frontend service
+  - type: web
+    name: virtual-library-rooms-frontend
+    env: static
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: ./client/build
+    envVars:
+      - key: REACT_APP_API_URL
+        fromService:
+          name: virtual-library-rooms-backend
+          type: web
+          property: url
+
+envVarGroups:
+  - name: mongodb-config
+    envVars:
+      - key: MONGODB_URI
+        sync: false
